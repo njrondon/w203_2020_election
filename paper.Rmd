@@ -1,0 +1,228 @@
+---
+title: "Part Two"
+author: "Adam Childs, Steve Carr, Derek Lee, Javier Rondon"
+date: "3/3/2022"
+output:
+  pdf_document:
+    toc: false
+    number_sections: true
+    toc_depth: 3
+    extra_dependencies: ["float"]
+---
+
+\newpage
+\setcounter{page}{1}
+
+```{r load packages and set options, include=FALSE}
+library(tidyverse)
+library(knitr)
+library(dplyr)
+library(patchwork)
+library(haven)
+library(kableExtra)
+library(janitor)
+library(rstatix) # for calculating effect size of wilcox test
+
+options(tinytex.verbose = TRUE)
+knitr::opts_chunk$set(echo=FALSE, message=FALSE)
+
+```
+
+# Importance and Context
+The 2020 presidential election in the United States had about 160 million Americans cast their ballots in support of their preferred candidate. The election's increased voter turnout, combined with changing demographics can have a profound impact on future elections. The rising growth rate of nonwhite ethnic groups and of college-educated younger voters has shrunk the “non-college white” population to less than two-fifths of the voter population, a key Republican voter class. As a response to the loss in the 2020 election, Republican lawmakers have enacted a number of voting restrictions laws that may exacerbate current difficulties in voting. In light of these recent changes to voting policies in the US and considering the recent evolutions in voting behavior, we seek to understand the following research question: 
+
+\begin{quote}
+  \textit{Did Democrat voters or Republican voters experience more difficulty voting in the 2020 election?}
+\end{quote}
+The answer to this question can help provide context for these recent changes to voting laws and the impact it may have on a voter of a particular party. It will also provide useful information for political scientists and for local and federal government bodies to understand the partisan challenges to voting during the 2020 election. 
+
+```{r load data}
+anes <- read_sav("./anes_timeseries_2020_spss_20220210/anes_timeseries_2020_spss_20220210.sav")
+
+```
+
+```{r}
+#function to grab the value_ labels of any variable
+factorize_column <- function(x){
+  a <- factor(as.vector(x))
+  levels(a) <- names(attr(x, "labels"))
+  return(a)
+}
+
+#function to extract the names of any variable
+all_labels <- lapply(anes, attr, "label")
+
+```
+
+
+```{r clean data}
+# Transform data:
+anes <- anes %>% 
+  mutate(
+    party_id_simplified = case_when(
+      V201231x %in% -9:-8 ~ -1,
+      V201231x %in%   1:3 ~ 1,
+      V201231x ==       4 ~ 3,
+      V201231x %in%   5:7 ~ 2),
+    
+    party_id_simplified_cat = case_when(
+      V201231x %in% -9:-8  ~ "Refused/Don't know",
+      V201231x %in%    1:3 ~ "Democrat", 
+      V201231x ==        4 ~ "Independent",
+      V201231x %in%    5:7 ~ "Republican"),
+    
+     party_id_full_cat = case_when(
+      V201231x == -9 ~ "Refused",
+      V201231x == -8 ~ "Don't know",
+      V201231x == 1 ~ "Strong Democrat", 
+      V201231x == 2 ~ "Not very strong Democrat", 
+      V201231x == 3 ~ "Independent-Democrat", 
+      V201231x == 4 ~ "Independent", 
+      V201231x == 5 ~ "Independent-Republican", 
+      V201231x == 6 ~ "Not very strong Republican", 
+      V201231x == 7 ~  "Strong Republican"),
+    
+     difficult_to_vote_label = case_when(
+      V202119 == -9 ~ "Refused",
+      V202119 == -7 ~ "No post-election data, deleted due to incomplete interview",
+      V202119 == -6 ~ "No post-election interview",
+      V202119 == -5 ~ "Interview breakoff (sufficient partial IW)",
+      V202119 == -1 ~ "Inapplicable",
+      V202119 == 1  ~ "Not difficult at all",
+      V202119 == 2  ~ "A little difficult",
+      V202119 == 3  ~ "Moderately difficult",
+      V202119 == 4  ~ "Very difficult",
+      V202119 == 5  ~ "Extremely difficult"), 
+
+     wgt_sim = case_when(
+      V201231x %in% -9:7 ~ 1)
+    )
+
+### Generate clean dataset
+# Remove invalid voting rating in variable V202119:
+anes_clean <- filter(anes, V202119 > 0)
+
+voter_count <- count(anes_clean)
+
+# Remove all but Republicans/Democrats
+anes_clean <- filter(anes_clean, party_id_simplified_cat == 'Democrat' | 
+                       party_id_simplified_cat == 'Republican')
+
+
+```
+
+# Data and Methodology
+To answer this question, we analyzed data from the 2020 American National Election Studies (ANES) Time Series Study. The survey consists of questions designed to facilitate analysis of public opinion and voting behavior in U.S. presidential elections. The 2020 Time Series Study contains data collected from conducting 8280 pre-election interviews and 7449 post-election interviews. We remove non-voters and independents from consideration for this analysis, leaving `r count(anes_clean)` respondents in our dataset.
+
+For the purposes of this analysis, “voter” refers to an individual who reported having voted in the 2020 U.S. presidential election. After excluding non-voters, our dataset contains `r voter_count` voters.
+ 
+```{r Party Identification Simplified}
+
+table1 <- anes %>% group_by("Party Identification Simplified" =party_id_simplified_cat, "Party Identification" =party_id_full_cat)%>%
+  summarise("Respondent Count"=n())
+
+#summary(table1)
+table1_ug <- ungroup(table1)
+#str(table1_ug)
+kable(table1_ug[2:3], format = "latex", caption="Respondent Count by Party Identification", position="!h",  booktabs = T)  %>% 
+  pack_rows(index=table(table1_ug$`Party Identification Simplified`))
+
+```
+
+```{r tab.cap='Respondent Count by Party Identification', fig.pos='!h'}
+```
+
+To determine party preference, ANES uses a seven-point scale that categorizes a respondent’s level of partisanship (ANES variable V201231x). Each respondent is categorized according to this scale based on how they respond when asked which party they most closely identify with. The levels on this scale range from “Strong Democrat” to “Strong Republican,” with independents occupying the middle three categories (“Independent-Democrat,” “Independent,” and “Independent-Republican”). Because our research focuses only on the differences between Republicans and Democrats, we remove from the study those individuals who reported that they considered themselves to be "Independents." We include “leaners,” self-reported "Independent-Democrats" and "Independent-Republicans" in our analysis as Democrats and Republicans, respectively. Petrocik has found that leaners are virtually indistinguishable from weak partisans in their voting behavior\footnote{Petrocik "Measuring party support: Leaners are not independents" (2009)}; thus, they can be considered as partisans for the purposes of our study. The survey categorization of respondents by party identification is summarized in Table 1.
+
+Table 2 shows our categorization of respondents by partisanship. After removing non-voters and independents from the data, we are left with `r count(anes_clean)` observations to analyze (`r count(filter(anes_clean,party_id_simplified_cat == 'Democrat'))` Democrats and `r count(filter(anes_clean,party_id_simplified_cat == 'Republican'))` Republicans).
+
+To operationalize the concept of difficulty voting, we rely on the level of difficulty that respondents reported to have encountered when voting (ANES variable V202119). During the post-election interview, respondents who voted were asked, “How difficult was it for you to vote in this election?” Responses were provided using a five-point scale, with 1 being the least difficult and 5 being the most difficult. These levels of difficulty are listed in Table 2. A follow-up question was also given wherein respondents could select from a list of options specific reasons for any difficulty they experienced.
+
+```{r Party Identification Tables}
+
+table2 <-filter(anes_clean, V202119 >= 1 & V202119 <= 6) %>%   #Pull only difficulty level [1..5]
+  group_by("Difficulty Level" =V202119,                       #group by difficulty level and pull additional columns
+           "Difficulty Description"=difficult_to_vote_label, 
+           "Simplified Party" =party_id_simplified_cat)%>%
+  summarise(cnt=n())%>%                         #count rollup
+  pivot_wider(names_from="Simplified Party", values_from=cnt)       #expand out Democrat and Republican cols
+
+table2$per_dem <- round(100 * table2$Democrat/sum(table2$Democrat),2)
+table2$per_rep <- round(100 * table2$Republican/sum(table2$Republican),2)
+table2 <- table2 %>% dplyr::select(Democrat, per_dem, Republican, per_rep)
+table2 <- table2 %>% adorn_totals("row")
+
+#table2
+
+table2 %>%
+  kbl(caption="Respondent Difficulty Responses by Categorized Party Identification", booktabs = T,
+      format="latex",
+      col.names = c("Difficulty Level","Description", "Count", "Percentage", "Count", "Percentage"),
+      align="r") %>%
+  kable_minimal(full_width = F,  html_font = "Source Sans Pro")   %>% 
+  add_header_above(c(" " ," " =1 ,  "Democrats" = 2 , "Republicans" =2 ))
+
+
+
+```
+
+```{r tab.cap='Respondent Difficulty Responses by Categorized Party Identification', fig.pos='!h'}
+```
+
+```{r}
+
+## Visualize responses in difficulty across dataset
+difficulty_voting <-pollster::crosstab(df = anes_clean, x = V202119, y = party_id_simplified_cat, weight = wgt_sim, format = "long") %>%
+   ggplot( aes(  V202119, pct *n /100 , fill =party_id_simplified_cat   ) ) +
+   geom_bar(stat = "identity", position=position_dodge() ) +
+   ylim(0,3000) +
+  theme_bw() +
+   scale_fill_manual(values = c("#2a67de","#be0000")) +
+   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+   labs(title = "How difficult was it to vote in the 2020 Election ", x = "Difficulty Voting", y = "Count of Voters", fill= "Party Identification")
+   
+```
+
+
+```{r plots, fig.cap='Difficulty Voting in the 2020 Election, experienced by Democrat and Republican Voters.', fig.pos='h', fig.height = 3.0}
+(difficulty_voting)
+```
+
+
+Figure 1 shows that most voters did not experience difficulty voting, only a small percentage of Democrats (12%) and Republicans (10%) as shown in Table 2. The small percent of voters that did experience difficulty voting is clearly shown in Figure 1 with Difficulty Voting categories 2-5. Because the difficulty of voting is measured on a 5-point scale, and that we are interested in understanding the difference between Democrats and Republicans, a Wilcoxon rank-sum (also known as Mann-Whitney) test is appropriate for this analysis.  
+
+The null and alternative hypotheses of our Wilcoxon rank-sum test can be stated as follows: 
+\begin{quote}
+Null Hypothesis:  
+  \textit{There is no difference in probability of experiencing more voting difficulty between Democrat and Republican voters}
+\end{quote}
+
+\begin{quote}
+Alternative Hypothesis:
+  \textit{Democrats have a higher probability of experiencing more voting difficulty than Republican voters}
+\end{quote}
+
+In order for the Wilcoxon rank-sum test to be valid for analysis, the following must be true: respondents are independent of each other; data is at least ordinal; and the distributions of both populations are equal. Each assumption will be qualified in detail.
+
+First, responses in the data must be independent of each other. Surveyed participants were randomly drawn with equal probability from USPS address delivery data from 50 states and Washington DC. Selected households had at most one member of that household participate in the survey. Because of the random selection criteria and limits in responses per household, we can assume all samples are independent of each other. Second, the collected data for voting difficulty rating is ordinal; ranging from ‘not difficult at all’ to ‘extremely difficult’. Because there are clearly defined rankings of difficulties, this assumption is met. Lastly, we will assume the distributions of populations by party are equal in this dataset. There are  similar numbers of Republicans and  Democrats, each with at least 2700 responses. Having this many responses for each party allows us to assume similar distributions among members of each party.
+
+Meeting all criteria for a Wilcoxon rank-sum test, we will test the data using a 1-tailed test with 5% significance level to assess if Democrats are more likely to experience voting difficulty than Republicans. The test will use data from post-transformation Democrats and Republicans, and only those that provided a valid answer for the difficulty question on the 1-5 Likert scale.
+
+# Results
+```{r}
+# Wilcoxon Rank-sum Test
+#defaults: mu=0, conf.level = 0.95
+wilcox_rank_sum_results <- wilcox.test(V202119 ~ party_id_simplified_cat, data = anes_clean, alternative = "greater")
+```
+
+```{r}
+# Calculating effect size of test
+effect_size <- anes_clean %>% wilcox_effsize(V202119 ~ party_id_simplified_cat, alternative = "greater")
+```
+
+The test results indicate that Democrats (n = `r count(filter(anes_clean,party_id_simplified_cat == 'Democrat'))`) experienced more difficulty voting than Republicans (n = `r count(filter(anes_clean,party_id_simplified_cat == 'Republican'))`) with a p-value of `r  round(wilcox_rank_sum_results$p.value, digits = 5)` and effect size of `r round(effect_size$effsize, digits = 5)`. This result reflects the differences seen in Table 2, where 12% of Democrats experienced difficulty voting as compared to 10% of Republicans. While the effect size is small, it can potentially  have a major impact when a state’s election results can be determined by 1% or less of voters. 
+
+There are limitations to the test results that must be considered. The samples were collected from people that took substantial time to respond to the surveyors with English and Spanish being the only survey languages. Demographic or income data  was not provided to fully assess if the samples were representative of the US population. And, there may have been people that found voting so difficult that they were unable to vote at all (ANES variable V202123), resulting in under-reporting of the most extreme cases of voting difficulty.
+
+# Discussion
+Our study found that surveyed Democrats did experience more difficulty voting than Republicans in the 2020 election. These results are important for understanding disparities that may exist between voters of the country’s two major political parties. While this study focused on the difficulty experienced by those who actually voted, future research could examine the extent to which voter turnout is influenced by this kind of difficulty. Another area for further research is to study the extent to which difficulty voting is due to systemic causes or merely due to chance events such as bad weather. Policymakers, political scientists, activists, political campaigns, and the population of voters who are concerned with ensuring fairness in voting practices and equal opportunity to vote across all demographics may be interested in these results.
